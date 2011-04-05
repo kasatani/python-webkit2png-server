@@ -20,6 +20,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 
 import sys
+import traceback
 sys.path.append('webkit2png')
 from webkit2png import *
 from Queue import *
@@ -50,13 +51,18 @@ class ScreenshotServer(HTTPServer):
         self.queue = queue
 
 class ServerThread(Thread):
-    def __init__(self, queue):
+    def __init__(self, queue, port = 10080):
         Thread.__init__(self)
         self.queue = queue
+        self.port = port
 
     def run(self):
-        server = ScreenshotServer(('', 10080), self.queue)
-        server.serve_forever()
+        try:
+            server = ScreenshotServer(('', self.port), self.queue)
+            server.serve_forever()
+        except:
+            traceback.print_exc()
+            self.queue.put(None)
 
 # Based on __main__ from webkit2png.py
 if __name__ == '__main__':
@@ -111,6 +117,10 @@ if __name__ == '__main__':
                       help="Show debugging information.", default=False)
     parser.add_option("--log", action="store", dest="logfile", default=LOG_FILENAME,
                       help="Select the log output file",)
+    parser.add_option("--pidfile", action="store", dest="pidfile",
+                      help="Output PID to file",)
+    parser.add_option("--port", dest="port", type="int", default=10080,
+                      help="Server port number")
 
     # Parse command line arguments and validate them (as far as we can)
     (options,args) = parser.parse_args()
@@ -125,6 +135,11 @@ if __name__ == '__main__':
     # Enable output of debugging information
     if options.debug:
         logger.setLevel(logging.DEBUG)
+
+    if options.pidfile:
+        f = open(options.pidfile, 'w')
+        f.write(str(os.getpid()))
+        f.close()
 
     if options.xvfb:
         # Start 'xvfb' instance by replacing the current process
@@ -176,17 +191,21 @@ if __name__ == '__main__':
                     renderer.qWebSettings[QWebSettings.PluginsEnabled] = True
 
             request = Queue()
-            thread = ServerThread(request)
+            thread = ServerThread(request, options.port)
             thread.start()
             
             while(True):
-                url, width, height, response = request.get(True)
-                if width and height:
-                    renderer.scaleToWidth = width
-                    renderer.scaleToHeight = height
-                response.put(renderer.render_to_bytes(url))
+                r = request.get(True)
+                if r:
+                    url, width, height, response = r
+                    if width and height:
+                        renderer.scaleToWidth = width
+                        renderer.scaleToHeight = height
+                    response.put(renderer.render_to_bytes(url))
+                else:
+                    break
 
-            #QApplication.exit(0)
+            QApplication.exit(1)
         except RuntimeError, e:
             logger.error("main: %s" % e)
             print >> sys.stderr, e
